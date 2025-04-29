@@ -1,0 +1,54 @@
+type = "directrequest"
+schemaVersion = 1
+name = "Multi-Exchange Crypto Price Oracle"
+maxTaskDuration = "0s"
+contractAddress = "0x613a38AC1659769640aaE063C651F48E0250454C"
+externalJobID = "b1d42cd5-4a3a-4200-b1d7-ad7efe2a3868"
+observationSource = """
+    decode_log   [type="ethabidecodelog"
+                  abi="OracleRequest(bytes32 indexed specId, address requester, bytes32 requestId, uint256 payment, address callbackAddr, bytes4 callbackFunctionId, uint256 cancelExpiration, uint256 dataVersion, bytes data)"
+                  data="$(jobRun.logData)"
+                  topics="$(jobRun.logTopics)"]
+
+    decode_cbor  [type="cborparse" data="$(decode_log.data)"]
+    
+    coingecko_req [type="bridge" name="coingecko-adapter" requestData="{\\"id\\": $(jobSpec.externalJobID), \\"data\\": {\\"symbol\\": $(decode_cbor.symbol)}}"]
+    binance_req   [type="bridge" name="binance-adapter" requestData="{\\"id\\": $(jobSpec.externalJobID), \\"data\\": {\\"symbol\\": $(decode_cbor.symbol)}}"]
+    okx_req       [type="bridge" name="okx-adapter" requestData="{\\"id\\": $(jobSpec.externalJobID), \\"data\\": {\\"symbol\\": $(decode_cbor.symbol)}}"]
+
+    price_agg    [type="median" values="$(coingecko_req.price), $(binance_req.price), $(okx_req.price)"]
+    
+    encode_data  [type="ethabiencode" abi="(bytes32 requestId, uint256 price)" data="{ \\"requestId\\": $(decode_log.requestId), \\"price\\": $(price_agg) }"]
+    
+    encode_tx    [type="ethabiencode"
+                  abi="fulfillOracleRequest(bytes32 requestId, uint256 payment, address callbackAddress, bytes4 callbackFunctionId, uint256 expiration, bytes calldata data)"
+                  data="{\\"requestId\\": $(decode_log.requestId), \\"payment\\": $(decode_log.payment), \\"callbackAddress\\": $(decode_log.callbackAddr), \\"callbackFunctionId\\": $(decode_log.callbackFunctionId), \\"expiration\\": $(decode_log.cancelExpiration), \\"data\\": $(encode_data)}"
+                 ]
+                 
+    submit_tx    [type="ethtx" to="$(decode_log.contractAddress)" data="$(encode_tx)" minConfirmations="2"]
+
+    decode_log -> decode_cbor -> coingecko_req -> price_agg
+    decode_cbor -> binance_req -> price_agg
+    decode_cbor -> okx_req -> price_agg
+    price_agg -> encode_data -> encode_tx -> submit_tx
+"""
+
+# External Adapter Bridges Configuration
+[bridges]
+  [bridges.coingecko-adapter]
+  name = "coingecko-adapter"
+  url = "http://localhost:8080/coingecko"
+  confirmations = 0
+  minimumContractPayment = "0"
+
+  [bridges.binance-adapter]
+  name = "binance-adapter"
+  url = "http://localhost:8080/binance"
+  confirmations = 0
+  minimumContractPayment = "0"
+  
+  [bridges.okx-adapter]
+  name = "okx-adapter"
+  url = "http://localhost:8080/okx"
+  confirmations = 0
+  minimumContractPayment = "0"
